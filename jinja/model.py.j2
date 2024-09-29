@@ -1,0 +1,21 @@
+{# templates/model.py.j2 #}
+from database import db
+from sqlalchemy import *
+class {{ class_name }}(db.Model):
+    __tablename__ = '{{ table_name }}'
+    {% for column in columns %}
+    {{ column.columnname }} = db.Column({{ column.columntype }}, primary_key={{ column.pk }})
+    {% endfor %}
+    {% for rel in relationships %}
+    {{ rel.related_table }}s = db.relationship('{{ rel.related_class }}', secondary='{{ rel.relationship_table }}', back_populates='{{ rel.back_populates }}')
+    {% endfor %}
+
+    def to_dict(self):
+        return {
+            {% for column in columns %}
+            '{{ column.columnname }}': self.{{ column.columnname }},
+            {% endfor %}
+            {% for rel in relationships %}
+            '{{ rel.related_table }}s': [item.id for item in self.{{ rel.related_table }}s],
+            {% endfor %}
+        }

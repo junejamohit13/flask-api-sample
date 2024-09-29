@@ -1,0 +1,8 @@
+from database import db
+{% for relationship in relationships %}
+{{relationship['relationship_table']}} = db.Table('{{relationship['relationship_table']}}',
+    db.Column('{{relationship['table1']}}_{{relationship['table1_pk']}}',db.String,db.ForeignKey('{{relationship['table1']}}.{{relationship['table1_pk']}}'),primary_key=True),
+    db.Column('{{relationship['table2']}}_{{relationship['table2_pk']}}',db.String,db.ForeignKey('{{relationship['table2']}}.{{relationship['table2_pk']}}'),primary_key=True)
+)
+{% endfor %}
+

@@ -1,0 +1,118 @@
+{# templates/repository.py.j2 #}
+{% for table, details in tables.items() %}
+from models.{{table}} import {{details.class_name}}
+{% endfor %}
+from models.associations import *
+from database import db
+
+from cache.cache_layer import CacheLayer
+from database import init_app
+
+class Repository:
+    def __init__(self):
+        self.cache = CacheLayer()
+
+    {% for table, details in tables.items() %}
+    def get_{{ table }}(self, id):
+        # Attempt to get from cache
+        data = self.cache.get_{{ table }}(id)
+        if data:
+            return data, 'cache'
+
+        # If not in cache, fetch from DB
+        instance = {{ details.class_name }}.query.get(id)
+        if not instance:
+            return None, 'db_not_found'
+
+        # Serialize and cache
+        data = instance.to_dict()
+        self.cache.set_{{ table }}(id, data)
+
+        return data, 'db'
+
+    def create_{{ table }}(self, data):
+        # Create new instance
+        new_instance = {{ details.class_name }}(
+            {% for column in details.columns %}
+            {{ column.columnname }}=data.get('{{ column.columnname }}'),
+            {% endfor %}
+        )
+        db.session.add(new_instance)
+        db.session.commit()
+
+        # Serialize and cache
+        data = new_instance.to_dict()
+        self.cache.set_{{ table }}(new_instance.id, data)
+
+        return data
+
+    def update_{{ table }}(self, id, data):
+        # Update cache first
+        cached_data = self.cache.get_{{ table }}(id)
+        if cached_data:
+            cached_data.update(data)
+            self.cache.update_{{ table }}(id, data)
+        else:
+            # If not in cache, fetch from DB and cache it
+            instance = {{ details.class_name }}.query.get(id)
+            if not instance:
+                return None
+            cached_data = instance.to_dict()
+            cached_data.update(data)
+            self.cache.set_{{ table }}(id, cached_data)
+
+        # Update DB
+        instance = {{ details.class_name }}.query.get(id)
+        if not instance:
+            return None
+        {% for column in details.columns %}
+        if '{{ column.columnname }}' in data:
+            instance.{{ column.columnname }} = data['{{ column.columnname }}']
+        {% endfor %}
+        db.session.commit()
+
+        return cached_data
+
+    {% for rel in details.relationships %}
+    def get_{{ table }}_{{ rel.related_table }}s(self, a_id):
+        # Attempt to get related {{ rel.related_table }}s from cache
+        bs_data = self.cache.get_{{ table }}_{{ rel.related_table }}s(a_id)
+        if bs_data:
+            return bs_data, 'cache'
+
+        # Fetch from DB
+        a_instance = {{ details.class_name }}.query.get(a_id)
+        if not a_instance:
+            return None, 'db_not_found'
+
+        bs_data = [b.to_dict() for b in a_instance.{{ rel.related_table }}]
+        self.cache.set_{{ table }}_{{ rel.related_table }}s(a_id, bs_data)
+
+        return bs_data, 'db'
+
+    def replace_{{ table }}_{{ rel.related_table }}s(self, a_id, related_ids):
+        # Fetch the A instance
+        a_instance = {{ details.class_name }}.query.get(a_id)
+        if not a_instance:
+            return False, '{{ table }}_not_found'
+
+        # Fetch all related instances by provided IDs
+        related_class = globals()[ '{{ rel.related_class }}' ]
+        related_instances = related_class.query.filter(related_class.id.in_(related_ids)).all()
+
+        if len(related_instances) != len(related_ids):
+            return False, 'one_or_more_{{ rel.related_table }}_not_found'
+
+        # Replace existing relationships with new ones
+        setattr(a_instance, '{{ rel.related_table }}', related_instances)
+        db.session.commit()
+
+        # Serialize and update cache
+        bs_data = [b.to_dict() for b in related_instances]
+        self.cache.replace_{{ table }}_{{ rel.related_table }}s(a_id, bs_data)
+        self.cache.set_{{ table }}(a_id, a_instance.to_dict())
+
+        return True, 'relationships_replaced'
+
+    {% endfor %}
+    {% endfor %}

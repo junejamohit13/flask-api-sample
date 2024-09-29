@@ -1,0 +1,35 @@
+{# templates/cache_layer.py.j2 #}
+class CacheLayer:
+    def __init__(self):
+        {% for table, details in tables.items() %}
+        self.cache_{{ table }} = {}
+        {% for rel in details.relationships %}
+        self.cache_{{ table }}_{{ rel.related_table }}s = {}
+        {% endfor %}
+        {% endfor %}
+    
+    {% for table, details in tables.items() %}
+    def get_{{ table }}(self, id):
+        return self.cache_{{ table }}.get(id)
+    
+    def set_{{ table }}(self, id, data):
+        self.cache_{{ table }}[id] = data
+    
+    def update_{{ table }}(self, id, data):
+        if id in self.cache_{{ table }}:
+            self.cache_{{ table }}[id].update(data)
+        else:
+            self.cache_{{ table }}[id] = data
+    
+    {% for rel in details.relationships %}
+    def get_{{ table }}_{{ rel.related_table }}s(self, a_id):
+        return self.cache_{{ table }}_{{ rel.related_table }}s.get(a_id)
+    
+    def set_{{ table }}_{{ rel.related_table }}s(self, a_id, bs_data):
+        self.cache_{{ table }}_{{ rel.related_table }}s[a_id] = bs_data
+    
+    def replace_{{ table }}_{{ rel.related_table }}s(self, a_id, bs_data):
+        self.set_{{ table }}_{{ rel.related_table }}s(a_id, bs_data)
+    
+    {% endfor %}
+    {% endfor %}

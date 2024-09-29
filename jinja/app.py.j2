@@ -1,0 +1,26 @@
+{# templates/app.py.j2 #}
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+from database import init_app
+
+# Initialize Flask App
+app = Flask(__name__)
+
+# Configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///example.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+
+
+# Import Models to register them with SQLAlchemy
+
+{{model_imports}}
+from models.associations import *
+
+init_app(app)
+# Register Blueprints
+{{ blueprint_imports }}
+{{ blueprint_registers }}
+
+if __name__ == '__main__':
+    app.run(debug=True)
