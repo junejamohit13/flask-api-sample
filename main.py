@@ -10,9 +10,7 @@ from models.department import Department
 from models.location import Location
 app = Flask(__name__)
 
-# Configure the database (SQLite for simplicity)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///example.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
 
 # Initialize the database and create tables
 db = init_db(app)
