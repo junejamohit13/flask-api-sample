@@ -1,0 +1,71 @@
+from dash import Dash, html, dcc
+from dash.dependencies import Input, Output
+import dash_bootstrap_components as dbc
+{% for table,_ in model_schema.items() %}
+from layouts.{{table}}_layout import {{table}}_layout
+{% endfor %}
+from layouts.modal_layout import create_modal  # Add this import
+from model_manager import ModelManager, MODEL_SCHEMA
+# Import callbacks
+{% for table, _ in model_schema.items() %}
+from callbacks.{{table}}_callbacks import register_{{table}}_callbacks
+{% endfor %}
+from callbacks.modal_callbacks_edit import register_modal_callbacks_edit
+
+model_manager = ModelManager("http://127.0.0.1:8000")
+
+# Initialize the Dash app
+app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+
+# Create a dropdown for model selection
+model_dropdown = dcc.Dropdown(
+    id='model-selector',
+    options=[{'label': key.capitalize(), 'value': key} for key in MODEL_SCHEMA.keys()],
+    value='{{default_table}}',  # Default value
+    clearable=False,
+    style={'width': '200px'}
+)
+
+# Set up the layout
+app.layout = dbc.Container([
+    dbc.Row([
+        dbc.Col(html.H1("Data Entry POC", className="text-center"), width=9),
+        dbc.Col(model_dropdown, width=3, className="d-flex align-items-center justify-content-end"),
+    ], className="mb-4"),
+    dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody(id='dynamic-content')
+            ])
+        ], width=12)
+    ]),
+    # Add modals for each model
+    {% for table,_ in model_schema.items() %}
+    create_modal('{{table}}',mode='edit'),
+    create_modal('{{table}}',mode='add'),
+    {% endfor %}
+])
+
+# Callback to update content based on dropdown selection
+@app.callback(
+    Output('dynamic-content', 'children'),
+    [Input('model-selector', 'value')]
+)
+def update_layout(selected_model):
+    {% for table,_ in model_schema.items() %}
+    if selected_model == '{{table}}':
+        return {{table}}_layout()
+    {% endfor %}
+    else:
+        return html.Div("Layout not implemented yet")
+
+# Register callbacks
+{% for table,_ in model_schema.items() %}
+register_{{table}}_callbacks(app, model_manager)
+{% endfor %}
+register_modal_callbacks_edit(app, model_manager)
+
+
+# Run the app
+if __name__ == '__main__':
+    app.run_server(debug=True, port=8050)

@@ -1,0 +1,38 @@
+# layouts/{{table_name}}_layout.py
+from dash import html
+import dash_bootstrap_components as dbc
+from layouts.layout_util import get_select_table_layout, get_edit_save_alert_id, get_entry_form,get_edit_form_id
+from model_manager import ModelManager, Column
+import model_manager
+model_manager_obj = ModelManager()  # Replace with your actual API base URL
+
+def {{table_name}}_layout():
+    
+    return html.Div([
+        html.H3("{{table_name}}s"),
+        # Tabs at the top
+        dbc.Tabs([
+            dbc.Tab(label='Edit', tab_id='edit', children={{table_name}}_edit_layout()),
+            dbc.Tab(label='Add', tab_id='add', children={{table_name}}_add_layout()),
+        ], id='{{table_name}}-tabs', active_tab='edit')
+    ])
+
+def {{table_name}}_edit_layout():
+    {{table_name}}s_data, columns = model_manager_obj.get_data('{{table_name}}')
+    
+    return html.Div([
+        get_select_table_layout(select_table_id='{{table_name}}-edit-table', data={{table_name}}s_data, columns=columns, filter_action='native', row_selectable='single', selected_rows=[], page_size=10),
+        html.Div(id='{{table_name}}-edit-form'),
+        
+        get_edit_save_alert_id('{{table_name}}-edit-alert')
+    ])
+
+def {{table_name}}_add_layout():
+    #No data needs to be fetched as its a new data entry form
+    columns = model_manager.MODEL_SCHEMA['{{table_name}}']
+    
+    return html.Div([
+        get_entry_form(columns, {}, '{{table_name}}', suffix='-add'),
+        get_edit_save_alert_id('{{table_name}}-add-alert')
+    ])
+

@@ -1,0 +1,102 @@
+# model_manager.py
+import requests
+from typing import List, Dict, Any
+from dataclasses import dataclass
+
+@dataclass
+class Column:
+    id: str
+    label: str
+    type: str
+    editable: bool = True
+    is_relation: bool = False
+
+# Define model_schema outside the class
+MODEL_SCHEMA = {
+{% for table, columns in model_schema.items() %}
+    '{{ table }}': [
+    {% for column in columns %}
+        Column(
+            id='{{ column['id'] }}',
+            label='{{ column['label'] }}',
+            type='{{ column['type'] }}',
+            editable={{ column['editable'] }},
+            is_relation={{ column['is_relation'] }}
+        ),
+    {% endfor %}
+    ]{% if not loop.last %},{% endif %}
+{% endfor %}
+}
+
+# Define RELATION_FIELDS outside the class
+RELATION_FIELDS = {
+{% for table, columns in model_schema.items() %}
+    '{{ table }}': [{% for column in columns %}{% if column['is_relation'] %}'{{ column['id'] }}'{% if not loop.last %},{% endif %}{% endif %}{% endfor %}]{% if not loop.last %},{% endif %}
+{% endfor %}
+   
+}
+RELATION_KEY_TABLE = {}
+
+{% for table, columns in model_schema.items() %}{% for column in columns %}{% if column['is_relation'] %}
+RELATION_KEY_TABLE['{{ column['id'] }}']='{{column['related_table']}}'{% endif %}{% endfor %}{% endfor %}
+
+
+class ModelManager:
+    def __init__(self, base_url: str="http://127.0.0.1:8000"):
+        self.base_url = base_url
+
+    def get_data(self, model_name: str) -> tuple[List[Dict[str, Any]], List[Column]]:
+        if model_name not in MODEL_SCHEMA:
+            raise ValueError(f"Model '{model_name}' not found.")
+
+        url = f"{self.base_url}/{model_name}s"
+        response = requests.get(url)
+        
+        if response.status_code != 200:
+            raise Exception(f"Failed to fetch data for {model_name}. Status code: {response.status_code}")
+
+        data = response.json()
+        columns = self.get_columns(model_name)
+        return data, columns
+
+    @staticmethod
+    def get_columns(model_name: str) -> List[Column]:
+        if model_name not in MODEL_SCHEMA:
+            raise ValueError(f"Schema for model '{model_name}' not found.")
+        return [Column(**col.__dict__) for col in MODEL_SCHEMA[model_name]]
+
+    def read(self, model_name: str, identifier: str) -> Dict[str, Any]:
+        if model_name not in MODEL_SCHEMA:
+            raise ValueError(f"Model '{model_name}' not found.")
+        url = f"{self.base_url}/{model_name}s/{identifier}"
+        response = requests.get(url)
+        return response.json() if response.status_code == 200 else None
+
+    def write(self, model_name: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        if model_name not in MODEL_SCHEMA:
+            raise ValueError(f"Model '{model_name}' not found.")
+        url = f"{self.base_url}/{model_name}s"
+        response = requests.post(url, json=data)
+        if response.status_code != 201:
+            raise Exception(f"Failed to create {model_name}. Status code: {response.status_code}")
+        return response.json()
+
+    def update(self, model_name: str, identifier: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        if model_name not in MODEL_SCHEMA:
+            raise ValueError(f"Model '{model_name}' not found.")
+        url = f"{self.base_url}/{model_name}s/{identifier}"
+        response = requests.put(url, json=data)
+        if response.status_code != 200:
+            raise Exception(f"Failed to update {model_name}. Status code: {response.status_code}")
+        return response.json()
+
+    def delete(self, model_name: str, identifier: str) -> bool:
+        if model_name not in MODEL_SCHEMA:
+            raise ValueError(f"Model '{model_name}' not found.")
+        url = f"{self.base_url}/{model_name}s/{identifier}"
+        response = requests.delete(url)
+        return response.status_code == 204
+
+    @staticmethod
+    def get_relation_fields(model_name: str) -> List[str]:
+        return RELATION_FIELDS.get(model_name, [])

@@ -1,0 +1,32 @@
+# callbacks/{{table_name}}_callbacks.py
+from dash.dependencies import Input, Output, State
+from dash import no_update
+import dash_bootstrap_components as dbc
+from layouts.layout_util import get_entry_form
+from model_manager import MODEL_SCHEMA
+
+def register_{{table_name}}_callbacks(app, model_manager):
+    @app.callback(
+        Output('{{table_name}}-edit-form', 'children'),
+        [Input('{{table_name}}-edit-table', 'selected_rows')],
+        [State('{{table_name}}-edit-table', 'data')]
+    )
+    def display_{{table_name}}_edit_form(selected_rows, table_data):
+        if selected_rows and table_data:
+            selected_index = selected_rows[0]
+            {{table_name}} = table_data[selected_index]
+            return get_entry_form(MODEL_SCHEMA['{{table_name}}'], {{table_name}}, '{{table_name}}')
+        return no_update
+
+    @app.callback(
+        Output('{{table_name}}-edit-alert', 'children'),
+        Output('{{table_name}}-edit-alert', 'is_open'),
+        [Input('save-{{table_name}}-edit', 'n_clicks')],
+        [State('{{table_name}}-edit-form', 'children')]
+    )
+    def save_{{table_name}}_edit(n_clicks, form_data):
+        if n_clicks:
+            # Here you would typically save the data to your backend
+            # For now, we'll just show a success message
+            return "{{table_name}} updated successfully!", True
+        return no_update, no_update
