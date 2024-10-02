@@ -1,0 +1,171 @@
+dash_table.DataTable(
+            id=select_table_id,
+            data=formatted_data,
+            columns=columns,
+            filter_action=filter_action,
+            row_selectable=row_selectable,
+            selected_rows=selected_rows,
+            page_size=page_size,
+            style_table={
+                'overflowX': 'auto',
+                'overflowY': 'auto',
+                'maxHeight': '600px',
+            },
+            style_header={
+                'backgroundColor': '#3498db',
+                'color': 'white',
+                'fontWeight': 'bold',
+                'textAlign': 'left',
+                'position': 'sticky',
+                'top': 0,
+                'zIndex': 1000,
+            },
+            style_cell={
+                'textAlign': 'left',
+                'padding': '12px 15px',
+                'backgroundColor': 'white',
+                'minWidth': '100px',
+                'maxWidth': '300px',
+                'overflow': 'hidden',
+                'textOverflow': 'ellipsis',
+            },
+            style_data_conditional=[
+                {
+                    'if': {'row_index': 'odd'},
+                    'backgroundColor': '#f8f9fa',
+                },
+                {
+                    'if': {'state': 'selected'},
+                    'backgroundColor': '#e9ecef',
+                    'border': '1px solid #3498db',
+                },
+            ],
+            style_as_list_view=True,
+            sort_action="native",
+            sort_mode="multi",
+            page_action="native",
+            page_current=0,
+
+
+
+
+#app.index.string
+app.index_string = '''
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>Data Entry POC</title>
+        {%favicon%}
+        {%css%}
+        <style>
+            body {
+                font-family: 'Roboto', sans-serif;
+                background-color: #f8f9fa;
+            }
+            .header {
+                background-color: #2C3E50;
+                color: white;
+                padding: 1rem 0;
+                margin-bottom: 2rem;
+            }
+            .footer {
+                background-color: #2C3E50;
+                color: white;
+                padding: 1rem 0;
+                position: fixed;
+                bottom: 0;
+                width: 100%;
+            }
+            .content-wrapper {
+                margin-bottom: 5rem;
+            }
+            .card {
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            }
+            .table-responsive {
+                overflow-x: auto;
+                max-height: 600px;
+            }
+            .table {
+                background-color: white;
+                width: 100%;
+            }
+            .table thead th {
+                background-color: #3498db;
+                color: white;
+                position: sticky;
+                top: 0;
+                z-index: 1;
+            }
+            .table tbody tr:nth-of-type(even) {
+                background-color: #f8f9fa;
+            }
+            .table tbody tr:hover {
+                background-color: #e9ecef;
+            }
+            .form-group {
+                margin-bottom: 1.5rem;
+            }
+            .form-control {
+                border-radius: 0.25rem;
+            }
+            .Select-control {
+                background-color: #fff !important;
+            }
+            .Select-value-label {
+                color: #333 !important;
+            }
+            .Select-menu-outer {
+                background-color: white;
+            }
+        </style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+'''
+model_dropdown = dcc.Dropdown(
+    id='model-selector',
+    options=[{'label': key.capitalize(), 'value': key} for key in MODEL_SCHEMA.keys()],
+    value='user',  # Default value
+    clearable=False,
+    style={'width': '200px', 'color': '#333'}
+)
+
+# Set up the layout
+app.layout = html.Div([
+    # Header
+    html.Div([
+        dbc.Container([
+            dbc.Row([
+                dbc.Col(html.H1("Data Entry POC", className="mb-0"), width=9),
+                dbc.Col(model_dropdown, width=3, className="d-flex align-items-center justify-content-end"),
+            ])
+        ])
+    ], className="header"),
+    
+    # Main content
+    dbc.Container([
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody(id='dynamic-content')
+                ], className="mb-4")
+            ], width=12)
+        ])
+    ], className="content-wrapper"),
+    
+    # Footer
+    html.Div([
+        dbc.Container([
+            html.P("© 2023 Your Company Name. All rights reserved.", className="mb-0 text-center")
+        ])
+    ], className="footer"),
+    
