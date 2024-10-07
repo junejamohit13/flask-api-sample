@@ -172,3 +172,36 @@ columns_to_update = [col for col in row.keys() if col != 'id' and not (pd.isna(r
 # Run Dash app
 if __name__ == "__main__":
     app.run_server(debug=True,port=8060)
+
+
+@app.callback(
+    Output("save-status", "children"),
+    Input("save-button", "n_clicks"),
+    State("editable-table", "data"),
+    prevent_initial_call=True
+)
+def save_changes(n_clicks, updated_data):
+    if n_clicks > 0:
+        with sqlite3.connect(db_url) as conn:
+            cursor = conn.cursor()
+            # Loop through updated data and update the database
+            for row in updated_data:
+                row_id = row['id']
+                columns_to_update = [
+                    col for col in row.keys()
+                    if col != 'id' and not (pd.isna(row[col]) and pd.isna(data.at[row_id, col])) and row[col] != data.at[row_id, col]
+                ]
+                if columns_to_update:
+                    set_clause = ', '.join([f"{col} = ?" for col in columns_to_update])
+                    values = [row[col] for col in columns_to_update] + [row_id]
+                    print(f"set_clause: {set_clause}")
+                    print(f"values: {values}")
+                    cursor.execute(f'''
+                        UPDATE sample_data
+                        SET {set_clause}
+                        WHERE id = ?
+                    ''', values)
+            conn.commit()
+        return "Changes saved successfully!"
+    return ""
+
