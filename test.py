@@ -167,6 +167,7 @@ def save_changes(n_clicks, updated_data):
             conn.commit()
         return "Changes saved successfully!"
     return ""
+columns_to_update = [col for col in row.keys() if col != 'id' and not (pd.isna(row[col]) and pd.isna(data.loc[data['id'] == row['id'], col].values[0])) and row[col] != data.loc[data['id'] == row['id'], col].values[0]]
 
 # Run Dash app
 if __name__ == "__main__":
