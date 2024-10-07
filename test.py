@@ -3,10 +3,11 @@ from dash import Input, Output, State, ctx, dcc, html, dash_table
 import pandas as pd
 import sqlite3
 import dash_bootstrap_components as dbc
-from config import *
+
 # Initialize Dash app
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.FLATLY])
 
+# Set up SQLite database
 
 app.index_string = '''
 <!DOCTYPE html>
@@ -70,19 +71,47 @@ app.index_string = '''
 
 
 
+
+# Read initial data from database
+def fetch_data():
+    with sqlite3.connect(db_url) as conn:
+        df = pd.read_sql_query('SELECT * FROM sample_data', conn)
+    return df
+
 # Fetch initial data
-data = []
+data = fetch_data()
+columns = data.columns.tolist()
+
+# Create main filters
+def create_main_filters(df, key_columns, primary_key_column):
+    filter_columns = [col for col in df.columns if col not in key_columns + [primary_key_column]]
+    dropdowns = [
+        dcc.Dropdown(
+            id=f'dropdown-{col}',
+            options=[{'label': value, 'value': value} for value in df[col].unique()],
+            multi=True,
+            placeholder=f'Select {col}...'
+        ) for col in filter_columns
+    ]
+    # Create rows with 3 dropdowns each
+    dropdown_rows = []
+    for i in range(0, len(dropdowns), 3):
+        row = dbc.Row([
+            dbc.Col(dropdown, width=4) for dropdown in dropdowns[i:i+3]
+        ], className="mb-3")
+        dropdown_rows.append(row)
+    return dropdown_rows, filter_columns
 
 # Set up Dash layout
+filter_rows, filter_columns = create_main_filters(data, key_columns=[], primary_key_column='id')
+
 app.layout = dbc.Container([
     html.H2(f"Data Entry POC"),
+    html.Div(filter_rows),
     dash_table.DataTable(
         id='editable-table',
         columns=[
-            {'name': 'ID', 'id': 'id', 'editable': False},
-            {'name': 'Name', 'id': 'name', 'editable': True},
-            {'name': 'Age', 'id': 'age', 'editable': True},
-            {'name': 'City', 'id': 'city', 'editable': True}
+            {'name': col, 'id': col, 'editable': col != 'id'} for col in columns
         ],
         data=data.to_dict('records'),
         editable=True,
@@ -91,15 +120,28 @@ app.layout = dbc.Container([
         sort_mode="multi",
         style_table={'overflowX': 'auto'},
         style_cell={
-                    'minWidth': '100px', 'width': '150px', 'maxWidth': '180px',
-                    'overflow': 'hidden',
-                    'textOverflow': 'ellipsis',
-                    'textAlign': 'left'
-                },
+            'minWidth': '100px', 'width': '150px', 'maxWidth': '180px',
+            'overflow': 'hidden',
+            'textOverflow': 'ellipsis',
+            'textAlign': 'left'
+        },
     ),
-    html.Button("Save Changes", id="save-button", n_clicks=0,className="btn-streamlit mt-3"),
+    html.Button("Save Changes", id="save-button", n_clicks=0, className="btn-streamlit mt-3"),
     html.Div(id="save-status")
 ], className="mb-4")
+
+# Callback to filter the main table
+@app.callback(
+    Output('editable-table', 'data'),
+    [Input(f'dropdown-{col}', 'value') for col in filter_columns]
+)
+def filter_main_table(*values):
+    filtered_data = data.copy()
+    if any(value is not None for value in values):
+        for col, value in zip(filter_columns, values):
+            if value:
+                filtered_data = filtered_data[filtered_data[col].isin(value)]
+    return filtered_data.to_dict('records')
 
 # Callback to save updated data to the database
 @app.callback(
@@ -114,16 +156,18 @@ def save_changes(n_clicks, updated_data):
             cursor = conn.cursor()
             # Loop through updated data and update the database
             for row in updated_data:
-                cursor.execute('''
+                columns_to_update = [col for col in row.keys() if col != 'id']
+                set_clause = ', '.join([f"{col} = ?" for col in columns_to_update])
+                values = [row[col] for col in columns_to_update] + [row['id']]
+                cursor.execute(f'''
                     UPDATE sample_data
-                    SET name = ?, age = ?, city = ?
+                    SET {set_clause}
                     WHERE id = ?
-                ''', (row['name'], row['age'], row['city'], row['id']))
+                ''', values)
             conn.commit()
-            print("Changes saved successfully!")
         return "Changes saved successfully!"
     return ""
 
 # Run Dash app
 if __name__ == "__main__":
-    app.run_server(debug=True,port=8058)
+    app.run_server(debug=True,port=8060)
