@@ -102,3 +102,39 @@ if st.button("Save Changes"):
         st.success(f"Updated {len(updated_rows)} rows and added {len(added_rows)} rows successfully!")
     else:
         st.info("No changes detected.")
+
+from pyspark.sql import DataFrame, functions as F
+from pyspark.sql.functions import md5, concat_ws, col
+from typing import Dict, List, Tuple
+
+def process_dataframes(primary_key_df: DataFrame, dict_of_dicts: Dict[str, Dict]) -> Dict[str, Tuple[DataFrame, DataFrame]]:
+    result = {}
+    for key, value in dict_of_dicts.items():
+        primary_key_column = value['primary_key_column']
+        columns = value['columns']
+
+        # Replace nulls with empty strings for specified columns
+        df = primary_key_df
+        for c in columns:
+            df = df.withColumn(c, F.when(col(c).isNull(), F.lit('')).otherwise(col(c)))
+
+        # Create the primary_key_column by computing md5 hash of concatenated columns
+        concat_expr = concat_ws('|', *[col(c) for c in columns])
+        df = df.withColumn(primary_key_column, md5(concat_expr))
+
+        # Remove rows where all values for the primary key columns are null or empty string
+        conditions = [((col(c).isNull()) | (col(c) == '')) for c in columns]
+        all_null_condition = F.reduce(lambda a, b: a & b, conditions)
+        df_filtered = df.filter(~all_null_condition)
+
+        # Create the relationship table
+        relationship_table = df_filtered.select(primary_key_df.columns + [primary_key_column])
+
+        # Create the table with unique values of columns and primary_key_column
+        unique_table = df_filtered.select(columns + [primary_key_column]).dropDuplicates()
+
+        # Add to result
+        result[key] = (relationship_table, unique_table)
+
+    return result
+
