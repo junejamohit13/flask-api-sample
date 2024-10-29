@@ -1,198 +1,141 @@
-from docx import Document as DocumentFunction
-from docx.document import Document as DocumentClass
-from docx.text.paragraph import Paragraph
-from docx.table import Table
-from docx.oxml.ns import qn
-import re
-import os
+import streamlit as st
+import pandas as pd
+from dataclasses import dataclass
+from typing import Dict, List
 
-def iter_block_items(parent):
-    """
-    Generate a reference to each paragraph and table child within *parent*, in document order.
-    Each returned value is an instance of either Table or Paragraph.
-    """
-    if isinstance(parent, DocumentClass):
-        parent_elm = parent.element.body
-    else:
-        parent_elm = parent._element
-    for child in parent_elm.iterchildren():
-        if child.tag.endswith('}p'):
-            yield Paragraph(child, parent)
-        elif child.tag.endswith('}tbl'):
-            yield Table(child, parent)
+@dataclass
+class Row:
+    id: int
+    values: Dict[str, str]
 
-def process_runs(runs):
-    md_runs = []
-    for run in runs:
-        text = run.text or ''
-        # Check for images
-        image_md = process_run_image(run)
-        if image_md:
-            md_runs.append(image_md)
-            continue
-        # Apply formatting
-        if run.bold and run.italic:
-            text = f'<b><i>{text}</i></b>'  # Bold and Italic in HTML
+class AnnotatedDocument:
+    def __init__(self):
+        self.annotations = ["$temperature", "$pressure", "$flow_rate"]
+        self.next_id = 1
+        self.rows: List[Row] = []
+        
+        self.table_style = """
+       
+        """
+        
+        self.markdown_template = self.table_style + """
+        <table class="custom-table">
+            <tr>
+                <th>ID</th>
+                <th>Temperature (°C)</th>
+                <th>Pressure (bar)</th>
+                <th>Flow Rate (L/min)</th>
+            </tr>
+            {rows}
+        </table>
+        """
+        
+        self.row_template = """
+            <tr>
+                <td>{id}</td>
+                <td>{temperature}</td>
+                <td>{pressure}</td>
+                <td>{flow_rate}</td>
+            </tr>
+        """
+
+    def render_markdown(self) -> str:
+        rows_html = ""
+        for row in sorted(self.rows, key=lambda x: x.id):
+            rows_html += self.row_template.format(
+                id=row.id,
+                temperature=row.values.get("$temperature", ""),
+                pressure=row.values.get("$pressure", ""),
+                flow_rate=row.values.get("$flow_rate", "")
+            )
+        return self.markdown_template.format(rows=rows_html)
+
+def handle_edited_data(edited_df):
+    new_rows = []
+    next_id = 1
+    
+    for _, row in edited_df.iterrows():
+        row_id = int(next_id if pd.isna(row["ID"]) else row["ID"])
+        next_id = max(next_id, row_id) + 1
+        
+        values = {
+            "$temperature": "" if pd.isna(row["Temperature"]) else str(row["Temperature"]),
+            "$pressure": "" if pd.isna(row["Pressure"]) else str(row["Pressure"]),
+            "$flow_rate": "" if pd.isna(row["Flow Rate"]) else str(row["Flow Rate"])
+        }
+        
+        new_rows.append(Row(id=row_id, values=values))
+    
+    st.session_state.document.rows = new_rows
+    st.session_state.document.next_id = next_id
+
+def main():
+    st.title("Real-time Annotated Table Editor")
+    
+    if 'document' not in st.session_state:
+        st.session_state.document = AnnotatedDocument()
+    
+    col1, col2 = st.columns([0.4, 0.6])
+    
+    with col1:
+        st.subheader("Data Editor")
+        
+        if len(st.session_state.document.rows) == 0:
+            df = pd.DataFrame([{
+                "ID": 1,
+                "Temperature": "",
+                "Pressure": "",
+                "Flow Rate": ""
+            }])
         else:
-            if run.bold:
-                text = f'<b>{text}</b>'
-            if run.italic:
-                text = f'<i>{text}</i>'
-        if run.underline:
-            text = f'<u>{text}</u>'
-        if run.font.strike:
-            text = f'<s>{text}</s>'
-        md_runs.append(text)
-    return ''.join(md_runs)
+            df = pd.DataFrame([
+                {
+                    "ID": row.id,
+                    "Temperature": row.values.get("$temperature", ""),
+                    "Pressure": row.values.get("$pressure", ""),
+                    "Flow Rate": row.values.get("$flow_rate", "")
+                }
+                for row in st.session_state.document.rows
+            ])
+        
+        edited_df = st.data_editor(
+            df,
+            num_rows="dynamic",
+            column_config={
+                "ID": st.column_config.NumberColumn(
+                    "ID",
+                    help="Row ID",
+                    disabled=True,
+                ),
+                "Temperature": st.column_config.TextColumn(
+                    "Temperature",
+                    help="Temperature in °C"
+                ),
+                "Pressure": st.column_config.TextColumn(
+                    "Pressure",
+                    help="Pressure in bar"
+                ),
+                "Flow Rate": st.column_config.TextColumn(
+                    "Flow Rate",
+                    help="Flow rate in L/min"
+                )
+            },
+            hide_index=True,
+            key="data_editor"
+        )
+        
+        # Update document rows only when edits are detected
+        if "last_edited" not in st.session_state or st.session_state.last_edited != edited_df.to_dict():
+            handle_edited_data(edited_df)
+            st.session_state.last_edited = edited_df.to_dict()
 
-def process_run_image(run):
-    # Namespaces
-    NS_W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-    NS_A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
-    NS_R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    with col2:
+        
+        print(f"markdown:{st.session_state.document.render_markdown().strip().replace("\n", "").replace("\r", "")}")
+        st.markdown(st.session_state.document.render_markdown().strip().replace("\n", "").replace("\r", ""), unsafe_allow_html=True)
 
-    # Access the drawing elements in the run
-    drawing_elements = run.element.findall('.//{' + NS_W + '}drawing')
-    for drawing in drawing_elements:
-        blip_elements = drawing.findall('.//{' + NS_A + '}blip')
-        for blip in blip_elements:
-            embed = blip.get('{' + NS_R + '}embed')
-            if embed:
-                image_part = run.part.related_parts[embed]
-                image_bytes = image_part.blob
-                image_filename = os.path.basename(image_part.partname)
-                image_filepath = os.path.join(image_dir, image_filename)
-                # Save image
-                with open(image_filepath, 'wb') as img_file:
-                    img_file.write(image_bytes)
-                # Return HTML image tag
-                return f'<img src="{image_filepath}" alt="{image_filename}">'
-    return None
+if __name__ == "__main__":
+    main()
 
-def process_paragraph(paragraph):
-    style = paragraph.style.name
-    text = process_runs(paragraph.runs)
 
-    # Headings
-    if 'Heading' in style:
-        level = re.search(r'(\d+)', style)
-        level = int(level.group(1)) if level else 1
-        return f'<h{level}>{text}</h{level}>'
-    # Lists
-    elif 'List Bullet' in style or 'List Number' in style:
-        # For simplicity, treat all lists as unordered lists
-        return f'<li>{text}</li>'
-    # Regular paragraph
-    else:
-        return f'<p>{text}</p>'
 
-def process_table(table):
-    # Build a grid to represent the table
-    grid, max_cols = build_table_grid(table)
-
-    # Generate HTML
-    html = '<table border="1">\n'
-    for row in grid:
-        html += '  <tr>\n'
-        for cell_info in row:
-            if cell_info is None:
-                continue  # Skip placeholders
-            attributes = ''
-            if cell_info['colspan'] > 1:
-                attributes += f' colspan="{cell_info["colspan"]}"'
-            if cell_info['rowspan'] > 1:
-                attributes += f' rowspan="{cell_info["rowspan"]}"'
-            html += f'    <td{attributes}>{cell_info["text"]}</td>\n'
-        html += '  </tr>\n'
-    html += '</table>\n'
-    return html
-
-def build_table_grid(table):
-    grid = []
-    max_cols = 0
-    row_spans = {}
-
-    for row_idx, row in enumerate(table.rows):
-        grid_row = []
-        col_idx = 0
-        while col_idx < len(row.cells):
-            cell = row.cells[col_idx]
-            key = (row_idx, col_idx)
-            # Handle cells that are spanned from previous rows
-            while row_spans.get((row_idx, col_idx), 0):
-                grid_row.append(None)
-                row_spans[(row_idx, col_idx)] -= 1
-                col_idx += 1
-
-            cell_text = ''
-            for paragraph in cell.paragraphs:
-                cell_text += process_runs(paragraph.runs).strip() + '<br>'
-            cell_text = cell_text.rstrip('<br>')
-
-            colspan = get_colspan(cell)
-            rowspan = get_rowspan(cell)
-
-            # Record row spans
-            for i in range(1, rowspan):
-                row_spans[(row_idx + i, col_idx)] = colspan
-
-            cell_info = {
-                'text': cell_text,
-                'colspan': colspan,
-                'rowspan': rowspan
-            }
-            grid_row.append(cell_info)
-            # Move to next cell position
-            col_idx += colspan
-        max_cols = max(max_cols, len(grid_row))
-        grid.append(grid_row)
-    return grid, max_cols
-
-def get_colspan(cell):
-    grid_span_elem = cell._tc.find('.//w:gridSpan', cell._tc.nsmap)
-    if grid_span_elem is not None:
-        return int(grid_span_elem.get(qn('w:val')))
-    return 1
-
-def get_rowspan(cell):
-    v_merge_elem = cell._tc.find('.//w:vMerge', cell._tc.nsmap)
-    if v_merge_elem is not None:
-        v_merge_val = v_merge_elem.get(qn('w:val'))
-        if v_merge_val == 'restart':
-            rowspan = 1
-            next_row = cell._tc.getparent().getnext()
-            while next_row is not None:
-                cell_index = cell._tc.getparent().index(cell._tc)
-                next_cell_elements = [tc for tc in next_row if tc.tag.endswith('}tc')]
-                if cell_index >= len(next_cell_elements):
-                    break
-                next_cell_element = next_cell_elements[cell_index]
-                next_v_merge_elem = next_cell_element.find('.//w:vMerge', cell._tc.nsmap)
-                if next_v_merge_elem is not None and next_v_merge_elem.get(qn('w:val')) is None:
-                    rowspan += 1
-                    next_row = next_row.getnext()
-                else:
-                    break
-            return rowspan
-    return 1
-
-# Main code
-input_file = 'complex_10_pages.docx'
-output_file = 'output_4.md'
-image_dir = 'images_3'
-
-# Create images directory
-os.makedirs(image_dir, exist_ok=True)
-
-# Read the Word document
-doc = DocumentFunction(input_file)
-
-# Open output Markdown file
-with open(output_file, 'w', encoding='utf-8') as f:
-    for block in iter_block_items(doc):
-        if isinstance(block, Paragraph):
-            md = process_paragraph(block)
-            f.write(md + '\n\n')
-        elif isinstance(block, Table):
-            md = process_table(block)
-            f.write(md + '\n\n')
