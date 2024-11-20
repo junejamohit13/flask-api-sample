@@ -1,141 +1,173 @@
-import streamlit as st
-import pandas as pd
-from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, Union, List, Type
+from .bfs import find_path_between_models, get_relationships
+from .models import QueryConfig
+from .templates.base import TemplateManager
+import os
 
-@dataclass
-class Row:
-    id: int
-    values: Dict[str, str]
-
-class AnnotatedDocument:
-    def __init__(self):
-        self.annotations = ["$temperature", "$pressure", "$flow_rate"]
-        self.next_id = 1
-        self.rows: List[Row] = []
-        
-        self.table_style = """
-       
-        """
-        
-        self.markdown_template = self.table_style + """
-        <table class="custom-table">
-            <tr>
-                <th>ID</th>
-                <th>Temperature (°C)</th>
-                <th>Pressure (bar)</th>
-                <th>Flow Rate (L/min)</th>
-            </tr>
-            {rows}
-        </table>
-        """
-        
-        self.row_template = """
-            <tr>
-                <td>{id}</td>
-                <td>{temperature}</td>
-                <td>{pressure}</td>
-                <td>{flow_rate}</td>
-            </tr>
-        """
-
-    def render_markdown(self) -> str:
-        rows_html = ""
-        for row in sorted(self.rows, key=lambda x: x.id):
-            rows_html += self.row_template.format(
-                id=row.id,
-                temperature=row.values.get("$temperature", ""),
-                pressure=row.values.get("$pressure", ""),
-                flow_rate=row.values.get("$flow_rate", "")
-            )
-        return self.markdown_template.format(rows=rows_html)
-
-def handle_edited_data(edited_df):
-    new_rows = []
-    next_id = 1
+class QueryGenerator:
+    def __init__(self, template_manager: TemplateManager = None):
+        self.template_manager = template_manager or TemplateManager()
     
-    for _, row in edited_df.iterrows():
-        row_id = int(next_id if pd.isna(row["ID"]) else row["ID"])
-        next_id = max(next_id, row_id) + 1
+    def generate_sqlalchemy_code(
+        self,
+        session,
+        start_model: Type,
+        end_model: Union[Type, List[Type]],
+        end_filter: Union[str, Dict[Type, List[Dict[str, str]]], None] = None,
+        other_entities: List[Type] = None
+    ) -> str:
+        """Generate SQLAlchemy query code"""
+        # Convert single end_model to list for consistent handling
+        end_models = [end_model] if not isinstance(end_model, list) else end_model
         
-        values = {
-            "$temperature": "" if pd.isna(row["Temperature"]) else str(row["Temperature"]),
-            "$pressure": "" if pd.isna(row["Pressure"]) else str(row["Pressure"]),
-            "$flow_rate": "" if pd.isna(row["Flow Rate"]) else str(row["Flow Rate"])
-        }
+        # Find paths to all end models and other entities
+        all_paths = {}
+        all_entities = end_models + (other_entities or [])
         
-        new_rows.append(Row(id=row_id, values=values))
-    
-    st.session_state.document.rows = new_rows
-    st.session_state.document.next_id = next_id
-
-def main():
-    st.title("Real-time Annotated Table Editor")
-    
-    if 'document' not in st.session_state:
-        st.session_state.document = AnnotatedDocument()
-    
-    col1, col2 = st.columns([0.4, 0.6])
-    
-    with col1:
-        st.subheader("Data Editor")
+        # Get unique paths for all entities (both for filtering and loading)
+        for target_model in all_entities:
+            if target_model not in all_paths:  # Avoid finding same path twice
+                path = find_path_between_models(start_model, target_model)
+                if not path:
+                    raise ValueError(f"No path found between {start_model.__name__} and {target_model.__name__}")
+                all_paths[target_model] = path
         
-        if len(st.session_state.document.rows) == 0:
-            df = pd.DataFrame([{
-                "ID": 1,
-                "Temperature": "",
-                "Pressure": "",
-                "Flow Rate": ""
-            }])
-        else:
-            df = pd.DataFrame([
-                {
-                    "ID": row.id,
-                    "Temperature": row.values.get("$temperature", ""),
-                    "Pressure": row.values.get("$pressure", ""),
-                    "Flow Rate": row.values.get("$flow_rate", "")
-                }
-                for row in st.session_state.document.rows
-            ])
+        # Build the join conditions and joinedload options
+        joins = []
+        options = []
+        seen_paths = set()  # Track all relationship paths
         
-        edited_df = st.data_editor(
-            df,
-            num_rows="dynamic",
-            column_config={
-                "ID": st.column_config.NumberColumn(
-                    "ID",
-                    help="Row ID",
-                    disabled=True,
-                ),
-                "Temperature": st.column_config.TextColumn(
-                    "Temperature",
-                    help="Temperature in °C"
-                ),
-                "Pressure": st.column_config.TextColumn(
-                    "Pressure",
-                    help="Pressure in bar"
-                ),
-                "Flow Rate": st.column_config.TextColumn(
-                    "Flow Rate",
-                    help="Flow rate in L/min"
-                )
-            },
-            hide_index=True,
-            key="data_editor"
+        # Process paths for joins (needed for filtering)
+        for target_model in end_models:
+            path = all_paths[target_model]
+            current_model = start_model
+            for _, relationship_key, next_model in path:
+                join_str = f"{current_model.__name__}.{relationship_key}"
+                if join_str not in seen_paths:
+                    joins.append(f".join({join_str})")
+                    seen_paths.add(join_str)
+                current_model = next_model
+        
+        # Process paths for joinedload (needed for eager loading)
+        if other_entities:
+            for entity in other_entities:
+                path = all_paths[entity]
+                # Build the complete joinedload path
+                joined_load_path = []
+                current_model = start_model
+                
+                for _, rel_key, next_model in path:
+                    if not joined_load_path:
+                        # First relationship starts from start_model
+                        joined_load_path.append(f"{current_model.__name__}.{rel_key}")
+                    else:
+                        # Subsequent relationships need to be chained
+                        joined_load_path.append(rel_key)
+                    current_model = next_model
+                
+                # Create the joinedload with the full path
+                if joined_load_path:
+                    path_str = '.'.join(joined_load_path)
+                    if path_str not in seen_paths:
+                        options.append(f"joinedload({path_str})")
+                        seen_paths.add(path_str)
+        
+        # Build the query string
+        query_parts = [
+            f"return (session.query({start_model.__name__})"
+        ]
+        
+        # Add joins
+        query_parts.extend(joins)
+        
+        # Handle filters
+        if end_filter:
+            if isinstance(end_filter, str):
+                query_parts.append(f".filter({end_filter})")
+            else:
+                filter_conditions = []
+                for model, conditions in end_filter.items():
+                    model_conditions = []
+                    for cond in conditions:
+                        condition = cond['condition']
+                        operator = cond.get('operator', 'and').lower()
+                        
+                        if operator == 'or':
+                            if not model_conditions:
+                                model_conditions.append(f"({condition})")
+                            else:
+                                model_conditions.append(f" | ({condition})")
+                        else:
+                            if not model_conditions:
+                                model_conditions.append(f"({condition})")
+                            else:
+                                model_conditions.append(f" & ({condition})")
+                    
+                    if model_conditions:
+                        model_filter = " ".join(model_conditions)
+                        if "|" in model_filter:
+                            model_filter = f"({model_filter})"
+                        filter_conditions.append(model_filter)
+                
+                if filter_conditions:
+                    combined_filters = " & ".join(filter_conditions)
+                    query_parts.append(f".filter({combined_filters})")
+        
+        # Add options if any
+        if options:
+            options_str = ', '.join(options)
+            query_parts.append(f".options({options_str})")
+        
+        # Complete the query
+        query_str = '\n    '.join(query_parts)
+        query_str += ")"
+         
+        return query_str
+        
+    
+    def generate_graphql_query_file(
+        self,
+        filename: str,
+        query_configs: Dict[str, dict],
+    ) -> str:
+        """Generate a Python file with GraphQL-ready query functions"""
+        print(f"Template directory: {os.path.join(os.path.dirname(__file__), 'templates/query_templates')}")
+        
+        # Convert raw configs to QueryConfig objects and ensure defaults
+        processed_configs = {}
+        for name, config in query_configs.items():
+            if 'other_entities' not in config:
+                config['other_entities'] = []
+            if 'column_mappings' not in config:
+                config['column_mappings'] = {}
+            processed_configs[name] = QueryConfig.from_dict(config)
+        
+        # First generate the mapper file
+        print("Generating mapper file...")
+        mapper_code = self.template_manager.render_template(
+            "graphql/mapper",
+            {}
         )
+        mapper_file = f"{filename}_mapper.py"
+        print(f"Writing mapper to: {mapper_file}")
+        print(f"Mapper code length: {len(mapper_code)}")
+        with open(mapper_file, 'w') as f:
+            f.write(mapper_code)
         
-        # Update document rows only when edits are detected
-        if "last_edited" not in st.session_state or st.session_state.last_edited != edited_df.to_dict():
-            handle_edited_data(edited_df)
-            st.session_state.last_edited = edited_df.to_dict()
-
-    with col2:
+        # Then generate the query file
+        print("Generating query file...")
+        rendered_code = self.template_manager.render_template(
+            "graphql/query",
+            {
+                'query_configs': processed_configs,
+                'generate_sqlalchemy_code': self.generate_sqlalchemy_code
+            }
+        )
+        print(f"Query code length: {len(rendered_code)}")
         
-        print(f"markdown:{st.session_state.document.render_markdown().strip().replace("\n", "").replace("\r", "")}")
-        st.markdown(st.session_state.document.render_markdown().strip().replace("\n", "").replace("\r", ""), unsafe_allow_html=True)
-
-if __name__ == "__main__":
-    main()
-
-
-
+        query_file = f"{filename}.py"
+        print(f"Writing query to: {query_file}")
+        with open(query_file, 'w') as f:
+            f.write(rendered_code)
+        
+        return query_file
