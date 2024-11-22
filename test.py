@@ -1,42 +1,4 @@
-/* File: ./src/reportWebVitals.js */
-const reportWebVitals = onPerfEntry => {
-  if (onPerfEntry && onPerfEntry instanceof Function) {
-    import('web-vitals').then(({ getCLS, getFID, getFCP, getLCP, getTTFB }) => {
-      getCLS(onPerfEntry);
-      getFID(onPerfEntry);
-      getFCP(onPerfEntry);
-      getLCP(onPerfEntry);
-      getTTFB(onPerfEntry);
-    });
-  }
-};
 
-export default reportWebVitals;
--e 
-
-/* File: ./src/apollo_client.js */
-// src/apollo-client.js
-import { ApolloClient, InMemoryCache, HttpLink } from '@apollo/client';
-
-const client = new ApolloClient({
-  link: new HttpLink({
-    uri: 'http://127.0.0.1:8000/graphql', // Update this to your GraphQL endpoint
-  }),
-  cache: new InMemoryCache(),
-});
-
-export default client;
--e 
-
-/* File: ./src/index.js */
-// src/index.js
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
-
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
--e 
 
 /* File: ./src/utils/generateColumnsConfig.js */
 // src/utils/generateColumnsConfig.js
