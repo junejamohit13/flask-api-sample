@@ -1,4 +1,132 @@
+const styles = `
+      <style>
+        @page { margin: 1in; }
+        body { 
+          font-family: 'Times New Roman', Times, serif;
+          line-height: 1.6;
+          color: #000;
+          font-size: 12pt;
+        }
+        
+        /* Headings */
+        h1 { 
+          font-size: 18pt;
+          text-align: center;
+          margin-bottom: 24pt;
+          font-weight: bold;
+        }
+        
+        h2 { 
+          font-size: 14pt;
+          margin: 18pt 0 12pt 0;
+          font-weight: bold;
+        }
+        
+        /* Tables */
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 12pt 0 24pt 0;
+          page-break-inside: avoid;
+        }
+        
+        th {
+          background-color: #f0f0f0;
+          font-weight: bold;
+          text-align: left;
+          padding: 8pt;
+          border: 1pt solid #000;
+        }
+        
+        td {
+          padding: 8pt;
+          border: 1pt solid #000;
+        }
+        
+        /* Table Caption */
+        .table-caption {
+          font-weight: bold;
+          margin: 12pt 0 6pt 0;
+          page-break-after: avoid;
+        }
+        
+        /* Remove unwanted elements */
+        .MuiTablePagination-root,
+        .MuiCheckbox-root,
+        .MuiButtonBase-root,
+        .drag-handle,
+        td:first-child,
+        td:nth-child(2),
+        td:last-child,
+        th:first-child,
+        th:nth-child(2),
+        th:last-child {
+          display: none !important;
+        }
+        
+        /* Page break utilities */
+        .page-break {
+          page-break-before: always;
+        }
+      </style>
+    `;
 
+    // Clone the content and modify it for export
+    const contentClone = contentRef.current.cloneNode(true);
+    
+    // Remove unwanted elements
+    const elementsToRemove = [
+      '.MuiTablePagination-root',
+      '.MuiCheckbox-root',
+      '.MuiButtonBase-root',
+      '.drag-handle',
+      '.MuiToolbar-root'
+    ];
+    
+    elementsToRemove.forEach(selector => {
+      const elements = contentClone.querySelectorAll(selector);
+      elements.forEach(el => el.parentNode.removeChild(el));
+    });
+
+    // Add table captions
+    const tables = contentClone.getElementsByTagName('table');
+    Array.from(tables).forEach((table, index) => {
+      const caption = document.createElement('div');
+      caption.className = 'table-caption';
+      caption.textContent = `Table ${index + 1}: Order Details`;
+      table.parentNode.insertBefore(caption, table);
+    });
+
+    // Format the document
+    const header = `
+      <!DOCTYPE html>
+      <html xmlns:o='urn:schemas-microsoft-com:office:office' 
+            xmlns:w='urn:schemas-microsoft-com:office:word' 
+            xmlns='http://www.w3.org/TR/REC-html40'>
+      <head>
+        <meta charset='utf-8'>
+        <title>Order Management Report</title>
+        ${styles}
+      </head>
+      <body>
+        <h1>Order Management System Report</h1>
+    `;
+    
+    const footer = `
+        </body>
+      </html>
+    `;
+
+    const sourceHTML = header + contentClone.innerHTML + footer;
+
+    // Create the download link
+    const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
+    const fileDownload = document.createElement("a");
+    document.body.appendChild(fileDownload);
+    fileDownload.href = source;
+    fileDownload.download = `order-management-report.doc`;
+    fileDownload.click();
+    document.body.removeChild(fileDownload);
 
 /* File: ./src/utils/generateColumnsConfig.js */
 // src/utils/generateColumnsConfig.js
