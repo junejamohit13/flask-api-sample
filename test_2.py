@@ -1,140 +1,288 @@
-import sqlite3
-import pandas as pd
-import sqlalchemy
-from sqlalchemy import create_engine, MetaData, Table
-import streamlit as st
-import uuid
+import React, { useEffect, useState } from 'react';
+import { DataGrid, GridColDef, GridCellEditStopParams, GridRenderEditCellParams } from '@mui/x-data-grid';
+import { useQuery, useMutation } from '@apollo/client';
+import { GET_USER_TABLES_DATA, UPDATE_DATA, UPDATE_COMMENT } from '../graphql/queries';
+import { TableData, UpdateDataInput } from '../types';
+import { debounce } from 'lodash';
+import { TextField } from '@mui/material';
 
-# Configuration
-TABLE_NAME = "sample_table"  # This can be changed to any table name
-ID_COLUMN = "id"  # This can be changed to any column name that serves as the primary key
+interface DataTableProps {
+    username: string;
+}
 
-# Step 2: Create a sample Streamlit app
-st.set_page_config(page_title="SQLite + SQLAlchemy Streamlit App", layout="wide")
+interface ColumnComment {
+    value: string;
+}
 
-# SQLAlchemy connection setup
-engine = create_engine("sqlite:///sample_data.db")
-metadata = MetaData()
+interface ColumnComments {
+    [key: string]: ColumnComment;  // question -> {value: string} mapping
+}
 
-# Load table using SQLAlchemy with autoload
-table = Table(TABLE_NAME, metadata, autoload_with=engine)
+interface TableComments {
+    [column: string]: ColumnComments;  // column -> comments mapping
+}
 
-# Step 3: Load data using SQLAlchemy into a DataFrame
-def load_data():
-    with engine.connect() as connection:
-        result = connection.execute(table.select())
-        df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    return df
+interface ProcessedRow {
+    id: string;
+    tableName: string;
+    primaryKey: string;
+    column: string;
+    value: string;
+    q1: string;
+    q2: string;
+    q3: string;
+    q4: string;
+    [key: string]: string; // Add index signature
+}
 
-# Load initial data
-df = load_data()
-columns = [col for col in df.columns if col != ID_COLUMN]
+// Create a new EditCell component
+const EditCell = React.memo((params: GridRenderEditCellParams) => {
+    const [value, setValue] = useState(params.value || '');
 
-# Step 4: Create filters for columns in the Streamlit app
-st.write("### Filters")
-filter_cols = st.columns(len([col for col in columns if df[col].dtype == 'object']))
-filter_values = {}
+    return (
+        <TextField
+            fullWidth
+            multiline
+            rows={4}
+            value={value}
+            onChange={(e) => {
+                const newValue = e.target.value;
+                setValue(newValue);
+                params.api.setEditCellValue({ 
+                    id: params.id, 
+                    field: params.field, 
+                    value: newValue
+                });
+            }}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.stopPropagation();
+                }
+            }}
+            onFocus={(e) => {
+                e.target.select();
+            }}
+            sx={{ backgroundColor: 'white' }}
+        />
+    );
+});
 
-for i, col in enumerate([col for col in columns if df[col].dtype == 'object']):
-    with filter_cols[i]:
-        filter_values[col] = st.multiselect(f"Filter by {col.capitalize()}", options=df[col].unique(), default=[])
+export const DataTable: React.FC<DataTableProps> = ({ username }) => {
+    const [rows, setRows] = useState<ProcessedRow[]>([]);
+    const [columns, setColumns] = useState<GridColDef[]>([]);
 
-# Apply filters
-df_filtered = df.copy()
-for col, values in filter_values.items():
-    if values:
-        df_filtered = df_filtered[df_filtered[col].isin(values)]
+    // Query to fetch data
+    const { data, loading, error } = useQuery(GET_USER_TABLES_DATA, {
+        variables: { username }
+    });
 
-# Step 5: Show the data editor
-st.write("### Edit Data")
-df_filtered = df_filtered.reset_index(drop=True)
+    // Mutation for updating data
+    const [updateData] = useMutation(UPDATE_DATA);
 
-# Add a column selector
-edited_df = st.data_editor(
-    df_filtered,
-    num_rows="dynamic",
-    key="data_editor",
-    hide_index=True,
-    column_config={
-        ID_COLUMN: None
-    },
-    use_container_width=True,
-)
+    // Add comment mutation
+    const [updateComment] = useMutation(UPDATE_COMMENT);
 
-# After the data_editor
-selected_rows = edited_df.loc[st.session_state.data_editor.get("selected_rows", [])]
+    // Debounced update function
+    const debouncedUpdate = debounce((params: UpdateDataInput) => {
+        updateData({
+            variables: {
+                input: params
+            }
+        });
+    }, 500);
 
-# You can then use selected_rows for further operations
-if st.button("Process Selected Rows"):
-    st.write(f"Number of selected rows: {len(selected_rows)}")
-    st.write("Selected rows:", selected_rows)
+    // Debounced update for comments
+    const debouncedUpdateComment = debounce((params: {
+        username: string;
+        tableName: string;
+        primaryKey: string;
+        columnName: string;
+        question: string;
+        answer: string;
+    }) => {
+        updateComment({
+            variables: {
+                input: params
+            }
+        });
+    }, 500);
 
-# Step 6: Save updated data to SQLite
-def save_updates(updated_df):
-    updated_rows = []
-    added_rows = []
+    const processRowUpdate = React.useCallback(
+        (newRow: ProcessedRow, oldRow: ProcessedRow) => {
+            const field = Object.keys(newRow).find(key => newRow[key] !== oldRow[key]);
+            if (!field) return oldRow;
 
-    # Use the "edited_df" keyed attribute to get changes directly
-    edited_rows = st.session_state.data_editor.get("edited_rows", {})
-    added_rows = st.session_state.data_editor.get("added_rows", [])
+            if (field === 'value') {
+                const updateParams: UpdateDataInput = {
+                    username: username,
+                    tableName: newRow.tableName,
+                    primaryKey: newRow.primaryKey,
+                    columnName: newRow.column,
+                    value: newRow.value
+                };
+                debouncedUpdate(updateParams);
+            } 
+            else if (field.startsWith('q')) {
+                const commentParams = {
+                    username: username,
+                    tableName: newRow.tableName,
+                    primaryKey: newRow.primaryKey,
+                    columnName: newRow.column,
+                    question: field,
+                    answer: newRow[field]
+                };
+                console.log('Building comment params:', {
+                    field,
+                    newValue: newRow[field],
+                    finalParams: commentParams
+                });
+                debouncedUpdateComment(commentParams);
+            }
 
-    with engine.connect() as connection:
-        # Update existing rows
-        for row_index, changes in edited_rows.items():
-            # Get the id directly from the filtered DataFrame
-            row_id = df_filtered.loc[int(row_index), ID_COLUMN]
-            update_values = {column: changes[column] for column in changes}
-            connection.execute(table.update().where(table.c[ID_COLUMN] == row_id).values(**update_values))
-            updated_rows.append((row_id, update_values))
+            return newRow;
+        },
+        [username, debouncedUpdate, debouncedUpdateComment]
+    );
 
-        for row in added_rows:
-            insert_values = {column: row[column] for column in updated_df.columns if column != ID_COLUMN}
-            insert_values[ID_COLUMN] = str(uuid.uuid4())
-            connection.execute(table.insert().values(**insert_values))
-            added_rows.append(insert_values)
+    // Process data when it arrives
+    useEffect(() => {
+        if (data?.getUserTablesData) {
+            console.log('Raw GraphQL data:', data.getUserTablesData);
 
-    return updated_rows, added_rows
+            const processedRows: ProcessedRow[] = [];
+            
+            data.getUserTablesData.forEach((item: TableData) => {
+                Object.entries(item.data || {}).forEach(([column, value]) => {
+                    const columnComments = item.comments?.[column] || {};
+                    console.log('Processing comments for column:', column, columnComments);
+                    
+                    processedRows.push({
+                        id: `${item.tableName}-${item.primaryKey}-${column}`,
+                        tableName: item.tableName,
+                        primaryKey: item.primaryKey,
+                        column,
+                        value: value?.toString() ?? '',
+                        // Direct access to comment values since we simplified the structure
+                        q1: columnComments['q1'] ?? '',
+                        q2: columnComments['q2'] ?? '',
+                        q3: columnComments['q3'] ?? '',
+                        q4: columnComments['q4'] ?? ''
+                    });
+                });
+            });
 
-# Check if data was edited and save
-if st.button("Save Changes"):
-    updated_rows, added_rows = save_updates(edited_df)
-    if updated_rows or added_rows:
-        st.success(f"Updated {len(updated_rows)} rows and added {len(added_rows)} rows successfully!")
-    else:
-        st.info("No changes detected.")
+            console.log('Processed rows:', processedRows);
 
-from pyspark.sql import DataFrame, functions as F
-from pyspark.sql.functions import md5, concat_ws, col
-from typing import Dict, List, Tuple
+            const columns: GridColDef[] = [
+                { field: 'tableName', headerName: 'Table', width: 150 },
+                { field: 'primaryKey', headerName: 'Primary Key', width: 150 },
+                { field: 'column', headerName: 'Column', width: 150 },
+                { field: 'value', headerName: 'Value', width: 150, editable: true },
+                { 
+                    field: 'q1', 
+                    headerName: 'Question 1', 
+                    width: 200, 
+                    editable: true,
+                    renderEditCell: (params) => <EditCell {...params} />
+                },
+                { 
+                    field: 'q2', 
+                    headerName: 'Question 2', 
+                    width: 200, 
+                    editable: true,
+                    renderEditCell: (params) => <EditCell {...params} />
+                },
+                { 
+                    field: 'q3', 
+                    headerName: 'Question 3', 
+                    width: 200, 
+                    editable: true,
+                    renderEditCell: (params) => <EditCell {...params} />
+                },
+                { 
+                    field: 'q4', 
+                    headerName: 'Question 4', 
+                    width: 200, 
+                    editable: true,
+                    renderEditCell: (params) => <EditCell {...params} />
+                }
+            ];
 
-def process_dataframes(primary_key_df: DataFrame, dict_of_dicts: Dict[str, Dict]) -> Dict[str, Tuple[DataFrame, DataFrame]]:
-    result = {}
-    for key, value in dict_of_dicts.items():
-        primary_key_column = value['primary_key_column']
-        columns = value['columns']
+            setRows(processedRows);
+            setColumns(columns);
+        }
+    }, [data]);
 
-        # Replace nulls with empty strings for specified columns
-        df = primary_key_df
-        for c in columns:
-            df = df.withColumn(c, F.when(col(c).isNull(), F.lit('')).otherwise(col(c)))
+    if (loading) return <div>Loading...</div>;
+    if (error) return <div>Error: {error.message}</div>;
 
-        # Create the primary_key_column by computing md5 hash of concatenated columns
-        concat_expr = concat_ws('|', *[col(c) for c in columns])
-        df = df.withColumn(primary_key_column, md5(concat_expr))
+    return (
+        <div style={{ height: 400, width: '100%' }}>
+            <DataGrid
+                rows={rows}
+                columns={columns}
+                processRowUpdate={processRowUpdate}
+                disableRowSelectionOnClick
+            />
+        </div>
+    );
+}; 
+#types.ts
+export interface TableData {
+    userName: string;
+    tableName: string;
+    primaryKey: string;
+    data: Record<string, any>;
+    comments: {
+        [column: string]: {
+            [question: string]: string;
+        };
+    };
+}
 
-        # Remove rows where all values for the primary key columns are null or empty string
-        conditions = [((col(c).isNull()) | (col(c) == '')) for c in columns]
-        all_null_condition = F.reduce(lambda a, b: a & b, conditions)
-        df_filtered = df.filter(~all_null_condition)
+export interface UpdateDataInput {
+    username: string;
+    tableName: string;
+    primaryKey: string;
+    columnName: string;
+    value: string;
+} 
 
-        # Create the relationship table
-        relationship_table = df_filtered.select(primary_key_df.columns + [primary_key_column])
+###
+import { gql } from '@apollo/client';
 
-        # Create the table with unique values of columns and primary_key_column
-        unique_table = df_filtered.select(columns + [primary_key_column]).dropDuplicates()
+export const GET_USER_TABLES_DATA = gql`
+  query GetUserTablesData($username: String!) {
+    getUserTablesData(username: $username) {
+      userName
+      tableName
+      primaryKey
+      data
+      comments
+    }
+  }
+`;
 
-        # Add to result
-        result[key] = (relationship_table, unique_table)
+export const UPDATE_DATA = gql`
+  mutation UpdateData($input: DataInput!) {
+    updateData(input: $input) {
+      userName
+      tableName
+      primaryKey
+      data
+      comments
+    }
+  }
+`;
 
-    return result
-
+export const UPDATE_COMMENT = gql`
+  mutation UpdateComment($input: CommentInput!) {
+    updateComment(input: $input) {
+      userName
+      tableName
+      primaryKey
+      data
+      comments
+    }
+  }
+`; 
