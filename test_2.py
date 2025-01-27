@@ -1,288 +1,266 @@
-import React, { useEffect, useState } from 'react';
-import { DataGrid, GridColDef, GridCellEditStopParams, GridRenderEditCellParams } from '@mui/x-data-grid';
-import { useQuery, useMutation } from '@apollo/client';
-import { GET_USER_TABLES_DATA, UPDATE_DATA, UPDATE_COMMENT } from '../graphql/queries';
-import { TableData, UpdateDataInput } from '../types';
-import { debounce } from 'lodash';
-import { TextField } from '@mui/material';
+from sqlalchemy import Column, String, JSON
+from sqlalchemy.ext.declarative import declarative_base
 
-interface DataTableProps {
-    username: string;
-}
+Base = declarative_base()
 
-interface ColumnComment {
-    value: string;
-}
+class UserCache(Base):
+    __tablename__ = 'user_cache'
+    __table_args__ = {'schema': 'development'}
 
-interface ColumnComments {
-    [key: string]: ColumnComment;  // question -> {value: string} mapping
-}
+    user_name = Column(String(255), primary_key=True)
+    table_name = Column(String(255), primary_key=True)
+    primary_key = Column(String(255), primary_key=True)
+    data = Column(JSON)
+    comments = Column(JSON)
 
-interface TableComments {
-    [column: string]: ColumnComments;  // column -> comments mapping
-}
+    def __repr__(self):
+        return f"<UserCache(user_name='{self.user_name}', table_name='{self.table_name}', primary_key='{self.primary_key}', data={self.data}, comments={self.comments})>"
 
-interface ProcessedRow {
-    id: string;
-    tableName: string;
-    primaryKey: string;
-    column: string;
-    value: string;
-    q1: string;
-    q2: string;
-    q3: string;
-    q4: string;
-    [key: string]: string; // Add index signature
-}
-
-// Create a new EditCell component
-const EditCell = React.memo((params: GridRenderEditCellParams) => {
-    const [value, setValue] = useState(params.value || '');
-
-    return (
-        <TextField
-            fullWidth
-            multiline
-            rows={4}
-            value={value}
-            onChange={(e) => {
-                const newValue = e.target.value;
-                setValue(newValue);
-                params.api.setEditCellValue({ 
-                    id: params.id, 
-                    field: params.field, 
-                    value: newValue
-                });
-            }}
-            onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.stopPropagation();
-                }
-            }}
-            onFocus={(e) => {
-                e.target.select();
-            }}
-            sx={{ backgroundColor: 'white' }}
-        />
-    );
-});
-
-export const DataTable: React.FC<DataTableProps> = ({ username }) => {
-    const [rows, setRows] = useState<ProcessedRow[]>([]);
-    const [columns, setColumns] = useState<GridColDef[]>([]);
-
-    // Query to fetch data
-    const { data, loading, error } = useQuery(GET_USER_TABLES_DATA, {
-        variables: { username }
-    });
-
-    // Mutation for updating data
-    const [updateData] = useMutation(UPDATE_DATA);
-
-    // Add comment mutation
-    const [updateComment] = useMutation(UPDATE_COMMENT);
-
-    // Debounced update function
-    const debouncedUpdate = debounce((params: UpdateDataInput) => {
-        updateData({
-            variables: {
-                input: params
-            }
-        });
-    }, 500);
-
-    // Debounced update for comments
-    const debouncedUpdateComment = debounce((params: {
-        username: string;
-        tableName: string;
-        primaryKey: string;
-        columnName: string;
-        question: string;
-        answer: string;
-    }) => {
-        updateComment({
-            variables: {
-                input: params
-            }
-        });
-    }, 500);
-
-    const processRowUpdate = React.useCallback(
-        (newRow: ProcessedRow, oldRow: ProcessedRow) => {
-            const field = Object.keys(newRow).find(key => newRow[key] !== oldRow[key]);
-            if (!field) return oldRow;
-
-            if (field === 'value') {
-                const updateParams: UpdateDataInput = {
-                    username: username,
-                    tableName: newRow.tableName,
-                    primaryKey: newRow.primaryKey,
-                    columnName: newRow.column,
-                    value: newRow.value
-                };
-                debouncedUpdate(updateParams);
-            } 
-            else if (field.startsWith('q')) {
-                const commentParams = {
-                    username: username,
-                    tableName: newRow.tableName,
-                    primaryKey: newRow.primaryKey,
-                    columnName: newRow.column,
-                    question: field,
-                    answer: newRow[field]
-                };
-                console.log('Building comment params:', {
-                    field,
-                    newValue: newRow[field],
-                    finalParams: commentParams
-                });
-                debouncedUpdateComment(commentParams);
-            }
-
-            return newRow;
-        },
-        [username, debouncedUpdate, debouncedUpdateComment]
-    );
-
-    // Process data when it arrives
-    useEffect(() => {
-        if (data?.getUserTablesData) {
-            console.log('Raw GraphQL data:', data.getUserTablesData);
-
-            const processedRows: ProcessedRow[] = [];
+    @classmethod
+    def get_user_tables_data(cls, session, username: str):
+        """
+        Get all cache records for a given username.
+        
+        Args:
+            session: SQLAlchemy session
+            username (str): Username to filter by
             
-            data.getUserTablesData.forEach((item: TableData) => {
-                Object.entries(item.data || {}).forEach(([column, value]) => {
-                    const columnComments = item.comments?.[column] || {};
-                    console.log('Processing comments for column:', column, columnComments);
-                    
-                    processedRows.push({
-                        id: `${item.tableName}-${item.primaryKey}-${column}`,
-                        tableName: item.tableName,
-                        primaryKey: item.primaryKey,
-                        column,
-                        value: value?.toString() ?? '',
-                        // Direct access to comment values since we simplified the structure
-                        q1: columnComments['q1'] ?? '',
-                        q2: columnComments['q2'] ?? '',
-                        q3: columnComments['q3'] ?? '',
-                        q4: columnComments['q4'] ?? ''
-                    });
-                });
-            });
+        Returns:
+            list[UserCache]: List of matching cache records
+        """
+        result = session.query(cls).filter(
+            cls.user_name == username
+        ).all()
+        
+        return result
 
-            console.log('Processed rows:', processedRows);
+    @classmethod
+    def update_data(cls, session, username: str, table_name: str, primary_key: str, column_name: str, value: any):
+        """
+        Upsert data for a specific column in the cache.
+        
+        Args:
+            session: SQLAlchemy session
+            username (str): Username
+            table_name (str): Name of the table
+            primary_key (str): Primary key value
+            column_name (str): Column to update
+            value: Value to set for the column
+        """
+        # Try to get existing record
+        record = session.query(cls).filter_by(
+            user_name=username,
+            table_name=table_name,
+            primary_key=primary_key
+        ).first()
 
-            const columns: GridColDef[] = [
-                { field: 'tableName', headerName: 'Table', width: 150 },
-                { field: 'primaryKey', headerName: 'Primary Key', width: 150 },
-                { field: 'column', headerName: 'Column', width: 150 },
-                { field: 'value', headerName: 'Value', width: 150, editable: true },
-                { 
-                    field: 'q1', 
-                    headerName: 'Question 1', 
-                    width: 200, 
-                    editable: true,
-                    renderEditCell: (params) => <EditCell {...params} />
-                },
-                { 
-                    field: 'q2', 
-                    headerName: 'Question 2', 
-                    width: 200, 
-                    editable: true,
-                    renderEditCell: (params) => <EditCell {...params} />
-                },
-                { 
-                    field: 'q3', 
-                    headerName: 'Question 3', 
-                    width: 200, 
-                    editable: true,
-                    renderEditCell: (params) => <EditCell {...params} />
-                },
-                { 
-                    field: 'q4', 
-                    headerName: 'Question 4', 
-                    width: 200, 
-                    editable: true,
-                    renderEditCell: (params) => <EditCell {...params} />
-                }
-            ];
+        if record:
+            # Update existing record
+            if record.data is None:
+                record.data = {}
+            # Create a new dictionary with existing data
+            new_data = dict(record.data)
+            # Update the specific column
+            new_data[column_name] = value
+            # Assign the updated dictionary back to record.data
+            record.data = new_data
+        else:
+            # Create new record
+            record = cls(
+                user_name=username,
+                table_name=table_name,
+                primary_key=primary_key,
+                data={column_name: value},
+                comments={}
+            )
+            session.add(record)
+        
+        session.commit()
+        return record
 
-            setRows(processedRows);
-            setColumns(columns);
-        }
-    }, [data]);
+    @classmethod
+    def update_comment(cls, session, username: str, table_name: str, primary_key: str, 
+                      column_name: str, question: str, answer: str):
+        """
+        Upsert a comment for a specific column in the cache.
+        """
+        print(f"Updating comment with: username={username}, table={table_name}, key={primary_key}")
+        print(f"Column: {column_name}, Question: {question}, Answer: {answer}")
+        
+        try:
+            record = session.query(cls).filter_by(
+                user_name=username,
+                table_name=table_name,
+                primary_key=primary_key
+            ).first()
 
-    if (loading) return <div>Loading...</div>;
-    if (error) return <div>Error: {error.message}</div>;
+            if record:
+                print(f"Record found: {record}")
+                print(f"Current comments: {record.comments}")
+                
+                if record.comments is None:
+                    record.comments = {}
+                new_comments = dict(record.comments)
+                
+                # Initialize or reset column comments
+                if column_name not in new_comments:
+                    new_comments[column_name] = {}
+                else:
+                    # Keep only q1-q4 keys, remove old structure
+                    old_comments = new_comments[column_name]
+                    new_comments[column_name] = {
+                        k: v for k, v in old_comments.items() 
+                        if k in ['q1', 'q2', 'q3', 'q4']
+                    }
+                        
+                # Store answer directly under the question key
+                new_comments[column_name][question] = answer
+                
+                # Explicitly mark as modified
+                record.comments = new_comments
+                session.add(record)
+                
+                print(f"New comments structure: {new_comments}")
+                print(f"Record before commit: {record}")
+                
+                session.flush()  # Flush changes to DB
+                session.commit()  # Commit transaction
+                
+                # Verify the update
+                session.refresh(record)
+                print(f"Record after commit and refresh: {record}")
+                
+                return record
+        except Exception as e:
+            print(f"Error updating comment: {e}")
+            session.rollback()
+            raise
 
-    return (
-        <div style={{ height: 400, width: '100%' }}>
-            <DataGrid
-                rows={rows}
-                columns={columns}
-                processRowUpdate={processRowUpdate}
-                disableRowSelectionOnClick
-            />
-        </div>
-    );
-}; 
-#types.ts
-export interface TableData {
-    userName: string;
-    tableName: string;
-    primaryKey: string;
-    data: Record<string, any>;
-    comments: {
-        [column: string]: {
-            [question: string]: string;
-        };
-    };
-}
+    
 
-export interface UpdateDataInput {
-    username: string;
-    tableName: string;
-    primaryKey: string;
-    columnName: string;
-    value: string;
-} 
+    import strawberry
+from typing import List, Optional
+from sqlalchemy.orm import Session
+from fastapi import Depends
+from models import UserCache
+from database import get_session
+from strawberry.types import Info
+from typing import Any
 
-###
-import { gql } from '@apollo/client';
+# Input types for mutations
+@strawberry.input
+class DataInput:
+    username: str
+    table_name: str
+    primary_key: str
+    column_name: str
+    value: str
 
-export const GET_USER_TABLES_DATA = gql`
-  query GetUserTablesData($username: String!) {
-    getUserTablesData(username: $username) {
-      userName
-      tableName
-      primaryKey
-      data
-      comments
-    }
-  }
-`;
+@strawberry.input
+class CommentInput:
+    username: str
+    table_name: str
+    primary_key: str
+    column_name: str
+    question: str
+    answer: str
 
-export const UPDATE_DATA = gql`
-  mutation UpdateData($input: DataInput!) {
-    updateData(input: $input) {
-      userName
-      tableName
-      primaryKey
-      data
-      comments
-    }
-  }
-`;
+# Types for responses
+@strawberry.type
+class CacheData:
+    user_name: str
+    table_name: str
+    primary_key: str
+    data: Optional[strawberry.scalars.JSON] = None
+    comments: Optional[strawberry.scalars.JSON] = None
 
-export const UPDATE_COMMENT = gql`
-  mutation UpdateComment($input: CommentInput!) {
-    updateComment(input: $input) {
-      userName
-      tableName
-      primaryKey
-      data
-      comments
-    }
-  }
-`; 
+@strawberry.type
+class Query:
+    @strawberry.field
+    def get_user_tables_data(
+        self, 
+        username: str,
+        info: Info
+    ) -> List[CacheData]:
+        session = info.context["session"]
+        records = UserCache.get_user_tables_data(
+            session=session,
+            username=username
+        )
+        return [
+            CacheData(
+                user_name=record.user_name,
+                table_name=record.table_name,
+                primary_key=record.primary_key,
+                data=record.data,
+                comments=record.comments
+            ) for record in records
+        ]
+
+@strawberry.type
+class Mutation:
+    @strawberry.mutation
+    def update_data(
+        self, 
+        input: DataInput,
+        info: Info
+    ) -> CacheData:
+
+        session = info.context["session"]
+        record = UserCache.update_data(
+            session=session,
+            username=input.username,
+            table_name=input.table_name,
+            primary_key=input.primary_key,
+            column_name=input.column_name,
+            value=input.value
+        )
+
+        return CacheData(
+            user_name=record.user_name,
+            table_name=record.table_name,
+            primary_key=record.primary_key,
+            data=record.data,
+            comments=record.comments
+        )
+
+    @strawberry.mutation
+    def update_comment(
+        self, 
+        input: CommentInput,
+        info: Info
+    ) -> CacheData:
+        session = info.context["session"]
+        print("update_comment called")
+        print(input)
+        record = UserCache.update_comment(
+            session=session,
+            username=input.username,
+            table_name=input.table_name,
+            primary_key=input.primary_key,
+            column_name=input.column_name,
+            question=input.question,
+            answer=input.answer
+        )
+        return CacheData(
+            user_name=record.user_name,
+            table_name=record.table_name,
+            primary_key=record.primary_key,
+            data=record.data,
+            comments=record.comments
+        )
+
+schema = strawberry.Schema(query=Query, mutation=Mutation) 
+
+-- Create table in development schema
+CREATE TABLE IF NOT EXISTS development.user_cache (
+    user_name VARCHAR(255),
+    table_name VARCHAR(255),
+    primary_key VARCHAR(255),
+    data JSONB,
+    comments JSONB,
+    PRIMARY KEY (user_name, table_name, primary_key)
+);
+
+-- Add comment to explain JSONB constraint for comments
+COMMENT ON COLUMN development.user_cache.comments IS 'JSONB where values should be text type'; 
